@@ -163,16 +163,18 @@ app.get('/{*splat}', (req, res) => {
 process.on('SIGINT', () => { if (db) db.close(); process.exit(0); });
 process.on('SIGTERM', () => { if (db) db.close(); process.exit(0); });
 
-// ── Start ──────────────────────────────────────────────────
-initDb().then(() => {
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log('ABC Email Generator running at http://localhost:' + PORT);
-    console.log('API:');
-    console.log('  POST   /api/emails      — Generate & save email');
-    console.log('  GET    /api/emails       — List all records');
-    console.log('  DELETE /api/emails/:id   — Delete a record');
+// ── Start (listen first so Railway healthcheck passes) ─────
+app.listen(PORT, '0.0.0.0', () => {
+  console.log('ABC Email Generator running at http://localhost:' + PORT);
+  console.log('API:');
+  console.log('  POST   /api/emails      — Generate & save email');
+  console.log('  GET    /api/emails       — List all records');
+  console.log('  DELETE /api/emails/:id   — Delete a record');
+
+  initDb().then(() => {
+    console.log('Database initialized successfully.');
+  }).catch(err => {
+    console.error('Failed to initialize database:', err);
+    process.exit(1);
   });
-}).catch(err => {
-  console.error('Failed to initialize database:', err);
-  process.exit(1);
 });
