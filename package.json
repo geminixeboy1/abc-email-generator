@@ -4,8 +4,12 @@
   "description": "ABC Company Email ID Generator",
   "main": "server.js",
   "scripts": {
+    "build": "npm rebuild better-sqlite3",
     "start": "node server.js",
     "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",
