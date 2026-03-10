@@ -137,7 +137,7 @@ process.on('SIGINT', () => { db.close(); process.exit(0); });
 process.on('SIGTERM', () => { db.close(); process.exit(0); });
 
 // ── Start ──────────────────────────────────────────────────
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log('ABC Email Generator running at http://localhost:' + PORT);
   console.log('API:');
   console.log('  POST   /api/emails      — Generate & save email');
