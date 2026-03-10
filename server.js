@@ -15,7 +15,9 @@ app.use(express.static(path.join(__dirname)));
 let db;
 
 async function initDb() {
-  const SQL = await initSqlJs();
+  const SQL = await initSqlJs({
+    locateFile: file => path.join(__dirname, 'node_modules', 'sql.js', 'dist', file)
+  });
 
   // Load existing DB file if present
   if (fs.existsSync(DB_PATH)) {
