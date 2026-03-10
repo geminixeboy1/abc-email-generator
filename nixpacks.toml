@@ -1,8 +1,0 @@
-[phases.setup]
-aptPkgs = ["python3", "make", "g++"]
-
-[phases.build]
-cmds = ["npm install", "npm rebuild better-sqlite3"]
-
-[start]
-cmd = "node server.js"

@@ -1,39 +1,48 @@
 const express = require('express');
-const Database = require('better-sqlite3');
+const initSqlJs = require('sql.js');
+const fs = require('fs');
 const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+const DB_PATH = path.join(__dirname, 'emails.db');
 
 // ── Middleware ──────────────────────────────────────────────
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
 // ── Database Setup ─────────────────────────────────────────
-const db = new Database(path.join(__dirname, 'emails.db'));
-db.pragma('journal_mode = WAL');
+let db;
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS emails (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    first_name  TEXT NOT NULL,
-    last_name   TEXT NOT NULL,
-    email       TEXT NOT NULL UNIQUE,
-    created_at  DATETIME NOT NULL DEFAULT (datetime('now'))
-  );
-  CREATE INDEX IF NOT EXISTS idx_emails_email ON emails(email);
-`);
+async function initDb() {
+  const SQL = await initSqlJs();
 
-// Prepared statements
-const stmts = {
-  insert: db.prepare(`
-    INSERT INTO emails (first_name, last_name, email) VALUES (@first_name, @last_name, @email)
-  `),
-  findByEmail: db.prepare(`SELECT * FROM emails WHERE email = @email`),
-  listAll: db.prepare(`SELECT * FROM emails ORDER BY created_at DESC`),
-  count: db.prepare(`SELECT COUNT(*) as count FROM emails`),
-  deleteById: db.prepare(`DELETE FROM emails WHERE id = @id`),
-};
+  // Load existing DB file if present
+  if (fs.existsSync(DB_PATH)) {
+    const fileBuffer = fs.readFileSync(DB_PATH);
+    db = new SQL.Database(fileBuffer);
+  } else {
+    db = new SQL.Database();
+  }
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS emails (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      first_name  TEXT NOT NULL,
+      last_name   TEXT NOT NULL,
+      email       TEXT NOT NULL UNIQUE,
+      created_at  DATETIME NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_emails_email ON emails(email)`);
+  saveDb();
+}
+
+function saveDb() {
+  const data = db.export();
+  const buffer = Buffer.from(data);
+  fs.writeFileSync(DB_PATH, buffer);
+}
 
 // ── Helpers ────────────────────────────────────────────────
 function generateEmail(firstName, lastName) {
@@ -63,26 +72,21 @@ app.post('/api/emails', (req, res) => {
   const email = generateEmail(firstName, lastName);
 
   try {
-    const existing = stmts.findByEmail.get({ email });
-    if (existing) {
+    const existing = db.exec(`SELECT * FROM emails WHERE email = ?`, [email]);
+    if (existing.length > 0 && existing[0].values.length > 0) {
       return res.status(409).json({
         success: false,
         error: 'Email ' + email + ' already exists in the database.'
       });
     }
 
-    const result = stmts.insert.run({
-      first_name: firstName,
-      last_name: lastName,
-      email: email
-    });
+    db.run(`INSERT INTO emails (first_name, last_name, email) VALUES (?, ?, ?)`, [firstName, lastName, email]);
+    saveDb();
 
-    const record = {
-      id: result.lastInsertRowid,
-      first_name: firstName,
-      last_name: lastName,
-      email: email
-    };
+    const lastId = db.exec(`SELECT last_insert_rowid() as id`);
+    const id = lastId[0].values[0][0];
+
+    const record = { id, first_name: firstName, last_name: lastName, email };
 
     return res.status(201).json({ success: true, message: 'Email generated and saved!', record });
   } catch (err) {
@@ -94,12 +98,24 @@ app.post('/api/emails', (req, res) => {
 // GET /api/emails — list all records (report)
 app.get('/api/emails', (req, res) => {
   try {
-    const records = stmts.listAll.all();
-    const { count } = stmts.count.get();
+    const result = db.exec(`SELECT * FROM emails ORDER BY created_at DESC`);
+    const countResult = db.exec(`SELECT COUNT(*) as count FROM emails`);
+    const count = countResult.length > 0 ? countResult[0].values[0][0] : 0;
+
+    let records = [];
+    if (result.length > 0) {
+      const columns = result[0].columns;
+      records = result[0].values.map(row => {
+        const obj = {};
+        columns.forEach((col, i) => { obj[col] = row[i]; });
+        return obj;
+      });
+    }
+
     return res.json({
       success: true,
       count,
-      uniqueDomains: 1, // always abc.com
+      uniqueDomains: 1,
       records
     });
   } catch (err) {
@@ -116,10 +132,16 @@ app.delete('/api/emails/:id', (req, res) => {
   }
 
   try {
-    const result = stmts.deleteById.run({ id });
-    if (result.changes === 0) {
+    const before = db.exec(`SELECT COUNT(*) FROM emails WHERE id = ?`, [id]);
+    const exists = before.length > 0 && before[0].values[0][0] > 0;
+
+    if (!exists) {
       return res.status(404).json({ success: false, error: 'Record not found.' });
     }
+
+    db.run(`DELETE FROM emails WHERE id = ?`, [id]);
+    saveDb();
+
     return res.json({ success: true, message: 'Record deleted.' });
   } catch (err) {
     console.error('Delete error:', err.message);
@@ -133,14 +155,19 @@ app.get('/{*splat}', (req, res) => {
 });
 
 // ── Graceful shutdown ──────────────────────────────────────
-process.on('SIGINT', () => { db.close(); process.exit(0); });
-process.on('SIGTERM', () => { db.close(); process.exit(0); });
+process.on('SIGINT', () => { if (db) db.close(); process.exit(0); });
+process.on('SIGTERM', () => { if (db) db.close(); process.exit(0); });
 
 // ── Start ──────────────────────────────────────────────────
-app.listen(PORT, '0.0.0.0', () => {
-  console.log('ABC Email Generator running at http://localhost:' + PORT);
-  console.log('API:');
-  console.log('  POST   /api/emails      — Generate & save email');
-  console.log('  GET    /api/emails       — List all records');
-  console.log('  DELETE /api/emails/:id   — Delete a record');
+initDb().then(() => {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log('ABC Email Generator running at http://localhost:' + PORT);
+    console.log('API:');
+    console.log('  POST   /api/emails      — Generate & save email');
+    console.log('  GET    /api/emails       — List all records');
+    console.log('  DELETE /api/emails/:id   — Delete a record');
+  });
+}).catch(err => {
+  console.error('Failed to initialize database:', err);
+  process.exit(1);
 });
