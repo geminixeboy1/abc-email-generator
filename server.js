@@ -57,6 +57,9 @@ function validateName(name) {
   return name && typeof name === 'string' && /^[a-zA-Z\s'-]+$/.test(name.trim()) && name.trim().length > 0;
 }
 
+// ── Health check ───────────────────────────────────────────
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
 // ── API Routes ─────────────────────────────────────────────
 
 // POST /api/emails — generate and save a new email
